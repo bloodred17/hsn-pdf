@@ -1,2 +1,5 @@
 *.pdf
 output/
+.idea/
+.DS_Store
+.vscode/
