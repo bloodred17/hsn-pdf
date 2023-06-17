@@ -173,12 +173,6 @@ def collect_article_data(last_article, value):
             last_article[key] += " " + value.get(key)
 
 
-def hydrate(last_article, value: str, update_keys: list[str]=["description"]):
-    for key in last_article.keys():
-        if last_article.get(key) and key in update_keys:
-            last_article[key] += " " + value
-
-
 def underscore_ify(text: str):
     return text.replace(" ", "_")
 
@@ -210,12 +204,13 @@ def extract(name):
     current_sub_heading_2 = {}
     last_item_type: str
 
-    for index in range(pdf_page_count):
-        # if index < 2:
-        if index < 51:
+    for index in range(pdf_page_count + 1):
+        if index < 2:
             continue
-        if index == 57:
-            break
+        # if index < 692:
+        #     continue
+        # if index == 61:
+        #     break
 
         print("Page " + str(index))
 
@@ -333,6 +328,8 @@ def extract(name):
                     elif hsn_type == "heading_article":
                         # Push article if present
                         if len(previous_article.keys()) > 0:
+                            if previous_article.get("type") == "heading_article":
+                                previous_article["main_head_description"] = previous_article["description"][:]
                             article_queue.append(previous_article)
                             previous_article = {}
 
@@ -392,6 +389,8 @@ def extract(name):
 
     # Push article if present
     if len(previous_article.keys()) > 0:
+        if previous_article.get("type") == "heading_article":
+            previous_article["main_head_description"] = previous_article["description"][:]
         article_queue.append(previous_article)
         previous_article = {}
         release(last_section_name + '_' + last_chapter_name, article_queue)

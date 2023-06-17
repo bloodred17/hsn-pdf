@@ -4,3 +4,4 @@ input/
 .idea/
 .DS_Store
 .vscode/
+*.zip
