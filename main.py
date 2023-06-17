@@ -29,8 +29,14 @@ def get_hsn_type(hsn_number: str, article: str, cd: str):
         dashes = 2
     elif re.search(r"- (.*)", article):
         dashes = 1
+    else:
+        dashes = 0
 
-    if dashes == 1 and len(cd) == 0:
+    if dashes == 0 and len(cd) > 0:
+        return "heading_article"
+    elif dashes == 0 and len(cd) == 0:
+        return "heading"
+    elif dashes == 1 and len(cd) == 0:
         return "sub_heading_1"
     elif dashes == 1 and len(cd) > 0:
         return "article"
@@ -86,10 +92,21 @@ def process_raw_data(key: str, value: str):
 
 def process_rate(text: str):
     text = text.strip()
-    text = text.replace(",", "")
+    text = text.replace(",", ".")
     if text == "free":
         return [
             Rate(0.0, "").get_dict()
+        ]
+
+    max_pattern = re.search(
+        r"([\d,.]+)([%\w\/]+)(?:[\n\s]+)with(?:[\n\s]+)a(?:[\n\s]+)maximum(?:[\n\s]+)of(?:[\n\s]+)([\d,.]+)([%\w\/]+)",
+        text)
+    if max_pattern:
+        val_1, unit_1, val_2, unit_2 = max_pattern.groups()
+        rate = Rate(float(val_1), unit_1)
+        rate.max = Rate(float(val_2), unit_2)
+        return [
+            rate.get_dict()
         ]
 
     or_pattern = re.search(r"(\d+)([%\w\/]+)\sor\s(\d+)([%\w\/]+)", text)
@@ -105,15 +122,6 @@ def process_rate(text: str):
         val_1, unit_1 = percent_pattern.groups()
         return [
             Rate(float(val_1), unit_1).get_dict()
-        ]
-
-    max_pattern = re.search(r"([\d,.]+)([%\w\/]+)(?:[\n\s]+)with(?:[\n\s]+)a(?:[\n\s]+)maximum(?:[\n\s]+)of(?:[\n\s]+)([\d,.]+)([%\w\/]+)", text)
-    if max_pattern:
-        val_1, unit_1, val_2, unit_2 = max_pattern.groups()
-        rate = Rate(float(val_1), unit_1)
-        rate.max = Rate(float(val_2), unit_2)
-        return [
-            rate.get_dict()
         ]
 
     return text
@@ -138,7 +146,7 @@ def release(filename: str, data: list):
     folder = "./output"
     if not os.path.isdir(folder):
         os.makedirs(folder)
-    filepath = folder + "/" + filename + '.json'
+    filepath = underscore_ify(folder + "/" + filename + '.json')
     with io.open(filepath, 'w', encoding='utf8') as outfile:
         str_ = json.dumps(data, indent=2, ensure_ascii=False)
         print("writing file to " + filepath)
@@ -165,8 +173,18 @@ def collect_article_data(last_article, value):
             last_article[key] += " " + value.get(key)
 
 
+def hydrate(last_article, value: str, update_keys: list[str]=["description"]):
+    for key in last_article.keys():
+        if last_article.get(key) and key in update_keys:
+            last_article[key] += " " + value
+
+
+def underscore_ify(text: str):
+    return text.replace(" ", "_")
+
+
 def extract(name):
-    file = "hsn.pdf"
+    file = "input/hsn.pdf"
 
     reader = PdfReader(file)
     pdf_page_count = len(reader.pages)
@@ -182,6 +200,7 @@ def extract(name):
 
     sections = []
     current_section = {}
+    last_section_name = ""
     last_chapter_name = ""
     articles = []
     article_queue = []
@@ -193,9 +212,9 @@ def extract(name):
 
     for index in range(pdf_page_count):
         # if index < 2:
-        if index < 13:
+        if index < 51:
             continue
-        if index == 32:
+        if index == 57:
             break
 
         print("Page " + str(index))
@@ -214,6 +233,7 @@ def extract(name):
                 "chapters": []
             }
             current_section = section
+            last_section_name = section["section_name"]
 
         elif found_chapter:
             chapter = {
@@ -226,12 +246,13 @@ def extract(name):
                 if len(previous_article.keys()) > 0:
                     article_queue.append(previous_article)
                     previous_article = {}
-                release(last_chapter_name, article_queue)
+                release(last_section_name + "_" + last_chapter_name, article_queue)
 
                 # Reset current data
                 current_heading = {}
                 current_sub_heading_1 = {}
                 current_sub_heading_2 = {}
+                previous_article = {}
                 article_queue = []
 
             last_chapter_name = chapter["chapter_name"]
@@ -294,6 +315,8 @@ def extract(name):
 
                         collect_header_data_from_columns(value)
                         current_heading = value
+                        current_sub_heading_1 = {}
+                        current_sub_heading_2 = {}
                         last_item_type = "heading"
 
                     elif hsn_type == "sub_heading_1":
@@ -306,6 +329,38 @@ def extract(name):
                         collect_header_data_from_columns(value)
                         current_sub_heading_2 = value
                         last_item_type = "sub_heading_2"
+
+                    elif hsn_type == "heading_article":
+                        # Push article if present
+                        if len(previous_article.keys()) > 0:
+                            article_queue.append(previous_article)
+                            previous_article = {}
+
+                        current_heading = value
+                        current_sub_heading_1 = {}
+                        current_sub_heading_2 = {}
+
+                        previous_article = {
+                            "id": str(uuid.uuid4()),
+                            "heading_code": current_heading.get("heading", ""),
+                            "sub_heading_1": current_sub_heading_1.get("heading", None),
+                            "sub_heading_2": current_sub_heading_2.get("heading", None),
+                            "code": value.get("heading", ""),
+                            "main_head_description": current_heading.get("article", ""),
+                            "sub_head_1_description": current_sub_heading_1.get("article", ""),
+                            "sub_head_2_description": current_sub_heading_2.get("article", ""),
+                            "description": value.get("article", ""),
+                            "cd": value.get("cd", ""),
+                            "general": value.get("general", ""),
+                            "eu_uk": value.get("eu_uk", ""),
+                            "efta": value.get("efta", ""),
+                            "sadc": value.get("sadc", ""),
+                            "mercosur": value.get("mercosur", ""),
+                            "afcfta": value.get("afcfta", ""),
+                            "statistical_unit": value.get("statistical_unit", ""),
+                            "type": "heading_article"
+                        }
+                        last_item_type = "article"
 
                     elif hsn_type == "article":
                         if len(current_heading.keys()) > 0:
@@ -331,8 +386,22 @@ def extract(name):
                                 "mercosur": value.get("mercosur", ""),
                                 "afcfta": value.get("afcfta", ""),
                                 "statistical_unit": value.get("statistical_unit", ""),
+                                "type": "article"
                             }
                             last_item_type = "article"
+
+    # Push article if present
+    if len(previous_article.keys()) > 0:
+        article_queue.append(previous_article)
+        previous_article = {}
+        release(last_section_name + '_' + last_chapter_name, article_queue)
+
+        # Reset current data
+        current_heading = {}
+        current_sub_heading_1 = {}
+        current_sub_heading_2 = {}
+        previous_article = {}
+        article_queue = []
 
 
 # Press the green button in the gutter to run the script.
